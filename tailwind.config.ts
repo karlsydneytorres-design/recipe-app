@@ -6,18 +6,7 @@ const config: Config = {
     './components/**/*.{js,ts,jsx,tsx,mdx}',
     './app/**/*.{js,ts,jsx,tsx,mdx}',
   ],
-  theme: {
-    extend: {
-      colors: {
-        green: {
-          50:  '#f0fdf4',
-          100: '#dcfce7',
-          600: '#16a34a',
-          700: '#15803d',
-        },
-      },
-    },
-  },
+  theme: { extend: {} },
   plugins: [],
 }
 export default config
