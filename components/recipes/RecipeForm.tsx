@@ -3,8 +3,12 @@ import { useForm, useFieldArray } from 'react-hook-form'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { NutritionLookup } from './NutritionLookup'
 
-type Ingredient = { name: string; amount: string; unit: string }
+type Ingredient = {
+  name: string; amount: string; unit: string
+  calories: string; protein: string; carbs: string; fat: string; fiber: string; sugar: string
+}
 type Step = { instruction: string }
 
 type RecipeFormValues = {
@@ -19,30 +23,28 @@ type RecipeFormValues = {
   steps: Step[]
 }
 
+const emptyIngredient: Ingredient = {
+  name: '', amount: '', unit: '', calories: '', protein: '', carbs: '', fat: '', fiber: '', sugar: '',
+}
+
 export function RecipeForm() {
   const router = useRouter()
   const [serverError, setServerError] = useState('')
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
+  const [expandedNutrition, setExpandedNutrition] = useState<Set<number>>(new Set())
 
-  const { register, handleSubmit, control, formState: { errors, isSubmitting } } =
+  const { register, handleSubmit, control, watch, setValue, formState: { errors, isSubmitting } } =
     useForm<RecipeFormValues>({
       defaultValues: {
-        title: '',
-        description: '',
-        prep_time: '',
-        cook_time: '',
-        servings: '2',
-        cuisine: '',
-        tags: '',
-        ingredients: [{ name: '', amount: '', unit: '' }],
+        title: '', description: '', prep_time: '', cook_time: '', servings: '2', cuisine: '', tags: '',
+        ingredients: [{ ...emptyIngredient }],
         steps: [{ instruction: '' }],
       },
     })
 
   const { fields: ingredientFields, append: addIngredient, remove: removeIngredient } =
     useFieldArray({ control, name: 'ingredients' })
-
   const { fields: stepFields, append: addStep, remove: removeStep } =
     useFieldArray({ control, name: 'steps' })
 
@@ -52,6 +54,36 @@ export function RecipeForm() {
     setImageFile(file)
     setImagePreview(URL.createObjectURL(file))
   }
+
+  const toggleNutritionPanel = (index: number) => {
+    setExpandedNutrition(prev => {
+      const next = new Set(prev)
+      next.has(index) ? next.delete(index) : next.add(index)
+      return next
+    })
+  }
+
+  const applyNutrition = (index: number, values: Record<string, string>) => {
+    setValue(`ingredients.${index}.calories`, values.calories)
+    setValue(`ingredients.${index}.protein`, values.protein)
+    setValue(`ingredients.${index}.carbs`, values.carbs)
+    setValue(`ingredients.${index}.fat`, values.fat)
+    setValue(`ingredients.${index}.fiber`, values.fiber)
+    setValue(`ingredients.${index}.sugar`, values.sugar)
+    setExpandedNutrition(prev => new Set(prev).add(index)) // auto-expand so they can see it filled in
+  }
+
+  // Live totals for the whole recipe, recalculated as the user types
+  const watchedIngredients = watch('ingredients')
+  const totals = watchedIngredients.reduce(
+    (acc, ing) => ({
+      calories: acc.calories + (parseFloat(ing.calories) || 0),
+      protein: acc.protein + (parseFloat(ing.protein) || 0),
+      carbs: acc.carbs + (parseFloat(ing.carbs) || 0),
+      fat: acc.fat + (parseFloat(ing.fat) || 0),
+    }),
+    { calories: 0, protein: 0, carbs: 0, fat: 0 }
+  )
 
   const onSubmit = async (values: RecipeFormValues) => {
     setServerError('')
@@ -63,9 +95,7 @@ export function RecipeForm() {
     if (imageFile) {
       const ext = imageFile.name.split('.').pop()
       const path = `${user.id}/${Date.now()}.${ext}`
-      const { error: uploadError } = await supabase.storage
-        .from('recipe-images')
-        .upload(path, imageFile)
+      const { error: uploadError } = await supabase.storage.from('recipe-images').upload(path, imageFile)
       if (uploadError) { setServerError('Image upload failed: ' + uploadError.message); return }
       const { data: urlData } = supabase.storage.from('recipe-images').getPublicUrl(path)
       image_url = urlData.publicUrl
@@ -74,14 +104,14 @@ export function RecipeForm() {
     const { data: recipe, error: recipeError } = await supabase
       .from('recipes')
       .insert({
-        user_id:     user.id,
-        title:       values.title,
+        user_id: user.id,
+        title: values.title,
         description: values.description || null,
-        prep_time:   values.prep_time ? parseInt(values.prep_time) : null,
-        cook_time:   values.cook_time ? parseInt(values.cook_time) : null,
-        servings:    values.servings ? parseInt(values.servings) : 2,
-        cuisine:     values.cuisine || null,
-        tags:        values.tags ? values.tags.split(',').map((t: string) => t.trim()).filter(Boolean) : [],
+        prep_time: values.prep_time ? parseInt(values.prep_time) : null,
+        cook_time: values.cook_time ? parseInt(values.cook_time) : null,
+        servings: values.servings ? parseInt(values.servings) : 2,
+        cuisine: values.cuisine || null,
+        tags: values.tags ? values.tags.split(',').map((t: string) => t.trim()).filter(Boolean) : [],
         image_url,
       })
       .select()
@@ -93,11 +123,17 @@ export function RecipeForm() {
     if (validIngredients.length > 0) {
       const { error: ingError } = await supabase.from('ingredients').insert(
         validIngredients.map((ing, i) => ({
-          recipe_id:  recipe.id,
-          name:       ing.name,
-          amount:     ing.amount ? parseFloat(ing.amount) : null,
-          unit:       ing.unit || null,
+          recipe_id: recipe.id,
+          name: ing.name,
+          amount: ing.amount ? parseFloat(ing.amount) : null,
+          unit: ing.unit || null,
           sort_order: i,
+          calories: ing.calories ? parseFloat(ing.calories) : null,
+          protein:  ing.protein  ? parseFloat(ing.protein)  : null,
+          carbs:    ing.carbs    ? parseFloat(ing.carbs)    : null,
+          fat:      ing.fat      ? parseFloat(ing.fat)      : null,
+          fiber:    ing.fiber    ? parseFloat(ing.fiber)    : null,
+          sugar:    ing.sugar    ? parseFloat(ing.sugar)    : null,
         }))
       )
       if (ingError) { setServerError(ingError.message); return }
@@ -106,11 +142,7 @@ export function RecipeForm() {
     const validSteps = values.steps.filter(s => s.instruction.trim())
     if (validSteps.length > 0) {
       const { error: stepError } = await supabase.from('steps').insert(
-        validSteps.map((step, i) => ({
-          recipe_id:   recipe.id,
-          step_number: i + 1,
-          instruction: step.instruction,
-        }))
+        validSteps.map((step, i) => ({ recipe_id: recipe.id, step_number: i + 1, instruction: step.instruction }))
       )
       if (stepError) { setServerError(stepError.message); return }
     }
@@ -122,22 +154,20 @@ export function RecipeForm() {
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-8">
 
+      {/* Basic Info */}
       <section className="bg-white rounded-xl border border-gray-100 p-6 flex flex-col gap-5">
         <h2 className="font-semibold text-gray-800">Basic Info</h2>
 
         <div>
           <label className="text-sm font-medium text-gray-700 block mb-2">Photo</label>
-          {imagePreview && (
-            <img src={imagePreview} alt="Preview" className="w-full h-48 object-cover rounded-lg mb-3" />
-          )}
+          {imagePreview && <img src={imagePreview} alt="Preview" className="w-full h-48 object-cover rounded-lg mb-3" />}
           <input type="file" accept="image/*" onChange={handleImageChange}
             className="text-sm text-gray-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-green-50 file:text-green-700 hover:file:bg-green-100" />
         </div>
 
         <div className="flex flex-col gap-1">
           <label className="text-sm font-medium text-gray-700">Title *</label>
-          <input {...register('title', { required: 'Title is required' })}
-            placeholder="e.g. Spaghetti Carbonara"
+          <input {...register('title', { required: 'Title is required' })} placeholder="e.g. Spaghetti Carbonara"
             className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500" />
           {errors.title && <p className="text-xs text-red-500">{errors.title.message}</p>}
         </div>
@@ -181,26 +211,106 @@ export function RecipeForm() {
         </div>
       </section>
 
+      {/* Ingredients + Nutrition */}
       <section className="bg-white rounded-xl border border-gray-100 p-6 flex flex-col gap-4">
-        <h2 className="font-semibold text-gray-800">Ingredients</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold text-gray-800">Ingredients</h2>
+          <p className="text-xs text-gray-400">Click 🔍 Nutrition to auto-fill from Open Food Facts</p>
+        </div>
+
         {ingredientFields.map((field, index) => (
-          <div key={field.id} className="flex gap-2 items-center">
-            <input {...register(`ingredients.${index}.name`)} placeholder="Ingredient name"
-              className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500" />
-            <input {...register(`ingredients.${index}.amount`)} placeholder="Amount"
-              className="w-20 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500" />
-            <input {...register(`ingredients.${index}.unit`)} placeholder="Unit"
-              className="w-20 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500" />
-            <button type="button" onClick={() => removeIngredient(index)}
-              className="text-gray-300 hover:text-red-400 text-xl transition-colors">×</button>
+          <div key={field.id} className="border border-gray-100 rounded-xl p-3">
+            <div className="flex gap-2 items-center">
+              <input {...register(`ingredients.${index}.name`)} placeholder="Ingredient name"
+                className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500" />
+              <input {...register(`ingredients.${index}.amount`)} placeholder="Amount"
+                className="w-20 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500" />
+              <input {...register(`ingredients.${index}.unit`)} placeholder="Unit"
+                className="w-20 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500" />
+
+              <NutritionLookup
+                ingredientName={watchedIngredients[index]?.name ?? ''}
+                amount={watchedIngredients[index]?.amount ?? ''}
+                unit={watchedIngredients[index]?.unit ?? ''}
+                onApply={(vals) => applyNutrition(index, vals)}
+              />
+
+              <button type="button" onClick={() => toggleNutritionPanel(index)}
+                className="text-xs text-gray-400 hover:text-gray-600 px-1.5 transition-colors">
+                {expandedNutrition.has(index) ? '▲' : '▼'}
+              </button>
+
+              <button type="button" onClick={() => removeIngredient(index)}
+                className="text-gray-300 hover:text-red-400 text-xl transition-colors">×</button>
+            </div>
+
+            {/* Manual nutrition entry, collapsible */}
+            {expandedNutrition.has(index) && (
+              <div className="grid grid-cols-6 gap-2 mt-3 pt-3 border-t border-gray-100">
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[11px] text-gray-400">Calories</label>
+                  <input {...register(`ingredients.${index}.calories`)} type="number" step="any" placeholder="0"
+                    className="border border-gray-200 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-green-500" />
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[11px] text-gray-400">Protein (g)</label>
+                  <input {...register(`ingredients.${index}.protein`)} type="number" step="any" placeholder="0"
+                    className="border border-gray-200 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-green-500" />
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[11px] text-gray-400">Carbs (g)</label>
+                  <input {...register(`ingredients.${index}.carbs`)} type="number" step="any" placeholder="0"
+                    className="border border-gray-200 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-green-500" />
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[11px] text-gray-400">Fat (g)</label>
+                  <input {...register(`ingredients.${index}.fat`)} type="number" step="any" placeholder="0"
+                    className="border border-gray-200 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-green-500" />
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[11px] text-gray-400">Fiber (g)</label>
+                  <input {...register(`ingredients.${index}.fiber`)} type="number" step="any" placeholder="0"
+                    className="border border-gray-200 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-green-500" />
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[11px] text-gray-400">Sugar (g)</label>
+                  <input {...register(`ingredients.${index}.sugar`)} type="number" step="any" placeholder="0"
+                    className="border border-gray-200 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-green-500" />
+                </div>
+              </div>
+            )}
           </div>
         ))}
-        <button type="button" onClick={() => addIngredient({ name: '', amount: '', unit: '' })}
+
+        <button type="button" onClick={() => addIngredient({ ...emptyIngredient })}
           className="text-sm text-green-600 font-medium hover:text-green-700 text-left">
           + Add Ingredient
         </button>
+
+        {/* Live nutrition totals */}
+        {(totals.calories > 0 || totals.protein > 0) && (
+          <div className="grid grid-cols-4 gap-3 mt-2 pt-4 border-t border-gray-100">
+            <div className="text-center">
+              <p className="text-xs text-gray-400">Total Calories</p>
+              <p className="text-sm font-semibold text-gray-800">{Math.round(totals.calories)} kcal</p>
+            </div>
+            <div className="text-center">
+              <p className="text-xs text-gray-400">Protein</p>
+              <p className="text-sm font-semibold text-gray-800">{Math.round(totals.protein)} g</p>
+            </div>
+            <div className="text-center">
+              <p className="text-xs text-gray-400">Carbs</p>
+              <p className="text-sm font-semibold text-gray-800">{Math.round(totals.carbs)} g</p>
+            </div>
+            <div className="text-center">
+              <p className="text-xs text-gray-400">Fat</p>
+              <p className="text-sm font-semibold text-gray-800">{Math.round(totals.fat)} g</p>
+            </div>
+          </div>
+        )}
       </section>
 
+      {/* Steps */}
       <section className="bg-white rounded-xl border border-gray-100 p-6 flex flex-col gap-4">
         <h2 className="font-semibold text-gray-800">Instructions</h2>
         {stepFields.map((field, index) => (
@@ -208,8 +318,7 @@ export function RecipeForm() {
             <span className="w-7 h-7 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-sm font-bold shrink-0 mt-2">
               {index + 1}
             </span>
-            <textarea {...register(`steps.${index}.instruction`)}
-              placeholder={`Describe step ${index + 1}...`} rows={2}
+            <textarea {...register(`steps.${index}.instruction`)} placeholder={`Describe step ${index + 1}...`} rows={2}
               className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none" />
             <button type="button" onClick={() => removeStep(index)}
               className="text-gray-300 hover:text-red-400 text-xl transition-colors mt-2">×</button>
@@ -222,14 +331,12 @@ export function RecipeForm() {
       </section>
 
       {serverError && (
-        <p className="text-sm text-red-500 bg-red-50 border border-red-100 rounded-lg px-4 py-3">
-          {serverError}
-        </p>
+        <p className="text-sm text-red-500 bg-red-50 border border-red-100 rounded-lg px-4 py-3">{serverError}</p>
       )}
 
       <div className="flex gap-3">
         <button type="submit" disabled={isSubmitting}
-          className="bg-green-600 text-white rounded-lg px-8 py-2.5 text-sm font-medium hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+          className="bg-green-600 text-white rounded-lg px-8 py-2.5 text-sm font-medium hover:bg-green-700 transition-colors disabled:opacity-50">
           {isSubmitting ? 'Saving...' : 'Save Recipe'}
         </button>
         <button type="button" onClick={() => router.back()}
@@ -237,7 +344,6 @@ export function RecipeForm() {
           Cancel
         </button>
       </div>
-
     </form>
   )
 }
