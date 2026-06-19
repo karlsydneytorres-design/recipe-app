@@ -4,7 +4,11 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 
-type Ingredient = { id: string; name: string; amount: number | null; unit: string | null; sort_order: number }
+type Ingredient = {
+  id: string; name: string; amount: number | null; unit: string | null; sort_order: number
+  calories: number | null; protein: number | null; carbs: number | null
+  fat: number | null; fiber: number | null; sugar: number | null
+}
 type Step = { id: string; step_number: number; instruction: string }
 type Recipe = {
   id: string
@@ -33,7 +37,7 @@ export default function RecipeDetailPage() {
       const supabase = createClient()
       const { data } = await supabase
         .from('recipes')
-        .select('*, ingredients(* ), steps(*)')
+        .select('*, ingredients(*), steps(*)')
         .eq('id', id)
         .single()
       setRecipe(data)
@@ -64,11 +68,7 @@ export default function RecipeDetailPage() {
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <p className="text-gray-400 text-sm">Loading...</p>
-      </div>
-    )
+    return <div className="flex items-center justify-center py-20"><p className="text-gray-400 text-sm">Loading...</p></div>
   }
 
   if (!recipe) {
@@ -84,20 +84,35 @@ export default function RecipeDetailPage() {
   const sortedIngredients = [...(recipe.ingredients ?? [])].sort((a, b) => a.sort_order - b.sort_order)
   const sortedSteps = [...(recipe.steps ?? [])].sort((a, b) => a.step_number - b.step_number)
 
+  // Sum nutrition across all ingredients
+  const nutritionTotals = sortedIngredients.reduce(
+    (acc, ing) => ({
+      calories: acc.calories + (ing.calories ?? 0),
+      protein: acc.protein + (ing.protein ?? 0),
+      carbs: acc.carbs + (ing.carbs ?? 0),
+      fat: acc.fat + (ing.fat ?? 0),
+      fiber: acc.fiber + (ing.fiber ?? 0),
+      sugar: acc.sugar + (ing.sugar ?? 0),
+    }),
+    { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0 }
+  )
+  const hasNutritionData = nutritionTotals.calories > 0 || nutritionTotals.protein > 0
+  const perServing = recipe.servings > 0 ? {
+    calories: Math.round(nutritionTotals.calories / recipe.servings),
+    protein: Math.round(nutritionTotals.protein / recipe.servings),
+    carbs: Math.round(nutritionTotals.carbs / recipe.servings),
+    fat: Math.round(nutritionTotals.fat / recipe.servings),
+  } : nutritionTotals
+
   return (
     <div className="max-w-2xl">
 
-      {/* Back + Actions */}
       <div className="flex items-center justify-between mb-6">
-        <Link href="/recipes" className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1">
-          ← Back
-        </Link>
+        <Link href="/recipes" className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1">← Back</Link>
         <div className="flex items-center gap-2">
           <button onClick={handleFavorite}
             className={`text-xl transition-transform hover:scale-110 ${recipe.is_favorite ? 'text-yellow-400' : 'text-gray-300'}`}
-            title={recipe.is_favorite ? 'Remove from favorites' : 'Add to favorites'}>
-            ★
-          </button>
+            title={recipe.is_favorite ? 'Remove from favorites' : 'Add to favorites'}>★</button>
           <Link href={`/recipes/${id}/edit`}
             className="border border-gray-200 text-gray-600 rounded-lg px-4 py-1.5 text-sm font-medium hover:bg-gray-50 transition-colors">
             Edit
@@ -109,17 +124,14 @@ export default function RecipeDetailPage() {
         </div>
       </div>
 
-      {/* Hero image */}
       {recipe.image_url
         ? <img src={recipe.image_url} alt={recipe.title} className="w-full h-64 object-cover rounded-2xl mb-6" />
         : <div className="w-full h-48 bg-gray-50 rounded-2xl flex items-center justify-center text-6xl mb-6">🍽️</div>
       }
 
-      {/* Title + meta */}
       <h1 className="text-3xl font-bold text-gray-900 mb-2">{recipe.title}</h1>
       {recipe.description && <p className="text-gray-500 mb-4">{recipe.description}</p>}
 
-      {/* Stats row */}
       <div className="flex flex-wrap gap-3 mb-6">
         {recipe.prep_time && (
           <div className="bg-white border border-gray-100 rounded-xl px-4 py-2 text-center">
@@ -151,18 +163,47 @@ export default function RecipeDetailPage() {
         )}
       </div>
 
-      {/* Tags */}
       {recipe.tags?.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-8">
           {recipe.tags.map(tag => (
-            <span key={tag} className="bg-green-50 text-green-700 text-xs px-3 py-1 rounded-full font-medium">
-              {tag}
-            </span>
+            <span key={tag} className="bg-green-50 text-green-700 text-xs px-3 py-1 rounded-full font-medium">{tag}</span>
           ))}
         </div>
       )}
 
-      {/* Ingredients */}
+      {/* Nutrition summary */}
+      {hasNutritionData && (
+        <section className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-2xl border border-green-100 p-6 mb-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Nutrition</h2>
+            <span className="text-xs text-green-700 bg-white/70 px-2.5 py-1 rounded-full font-medium">Per serving</span>
+          </div>
+          <div className="grid grid-cols-4 gap-4 mb-4">
+            <div className="text-center">
+              <p className="text-2xl font-bold text-gray-900">{perServing.calories}</p>
+              <p className="text-xs text-gray-500 mt-0.5">kcal</p>
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-bold text-gray-900">{perServing.protein}<span className="text-sm font-medium">g</span></p>
+              <p className="text-xs text-gray-500 mt-0.5">Protein</p>
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-bold text-gray-900">{perServing.carbs}<span className="text-sm font-medium">g</span></p>
+              <p className="text-xs text-gray-500 mt-0.5">Carbs</p>
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-bold text-gray-900">{perServing.fat}<span className="text-sm font-medium">g</span></p>
+              <p className="text-xs text-gray-500 mt-0.5">Fat</p>
+            </div>
+          </div>
+          <div className="flex items-center justify-center gap-6 pt-3 border-t border-green-100/70 text-xs text-gray-500">
+            <span>Fiber: <strong className="text-gray-700">{Math.round(nutritionTotals.fiber / recipe.servings)}g</strong></span>
+            <span>Sugar: <strong className="text-gray-700">{Math.round(nutritionTotals.sugar / recipe.servings)}g</strong></span>
+            <span className="text-gray-400">(whole recipe: {Math.round(nutritionTotals.calories)} kcal)</span>
+          </div>
+        </section>
+      )}
+
       {sortedIngredients.length > 0 && (
         <section className="bg-white rounded-2xl border border-gray-100 p-6 mb-5">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Ingredients</h2>
@@ -172,9 +213,7 @@ export default function RecipeDetailPage() {
                 <span className="w-1.5 h-1.5 bg-green-400 rounded-full shrink-0" />
                 <span className="text-sm text-gray-800 flex-1">{ing.name}</span>
                 {(ing.amount || ing.unit) && (
-                  <span className="text-sm text-gray-500 font-medium">
-                    {ing.amount} {ing.unit}
-                  </span>
+                  <span className="text-sm text-gray-500 font-medium">{ing.amount} {ing.unit}</span>
                 )}
               </li>
             ))}
@@ -182,7 +221,6 @@ export default function RecipeDetailPage() {
         </section>
       )}
 
-      {/* Steps */}
       {sortedSteps.length > 0 && (
         <section className="bg-white rounded-2xl border border-gray-100 p-6 mb-8">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Instructions</h2>

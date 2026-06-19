@@ -1,9 +1,10 @@
 'use client'
 import { useForm, useFieldArray } from 'react-hook-form'
 import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { NutritionLookup } from './NutritionLookup'
+import { scaleNutrition, NutritionResult } from '@/lib/nutrition'
 
 type Ingredient = {
   name: string; amount: string; unit: string
@@ -34,6 +35,10 @@ export function RecipeForm() {
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [expandedNutrition, setExpandedNutrition] = useState<Set<number>>(new Set())
 
+  // Stores the raw per-100g nutrition data from the last lookup, per ingredient index.
+  // When amount/unit changes later, we re-scale from this instead of stale baked-in numbers.
+  const [rawNutritionByIndex, setRawNutritionByIndex] = useState<Record<number, NutritionResult>>({})
+
   const { register, handleSubmit, control, watch, setValue, formState: { errors, isSubmitting } } =
     useForm<RecipeFormValues>({
       defaultValues: {
@@ -63,18 +68,52 @@ export function RecipeForm() {
     })
   }
 
-  const applyNutrition = (index: number, values: Record<string, string>) => {
-    setValue(`ingredients.${index}.calories`, values.calories)
-    setValue(`ingredients.${index}.protein`, values.protein)
-    setValue(`ingredients.${index}.carbs`, values.carbs)
-    setValue(`ingredients.${index}.fat`, values.fat)
-    setValue(`ingredients.${index}.fiber`, values.fiber)
-    setValue(`ingredients.${index}.sugar`, values.sugar)
-    setExpandedNutrition(prev => new Set(prev).add(index)) // auto-expand so they can see it filled in
+  // Called when the user picks a result from the NutritionLookup dropdown.
+  // We save the raw per-100g data AND compute the initial scaled values.
+  const applyNutrition = (index: number, raw: NutritionResult) => {
+    setRawNutritionByIndex(prev => ({ ...prev, [index]: raw }))
+
+    const amount = parseFloat(watch(`ingredients.${index}.amount`)) || 1
+    const unit = watch(`ingredients.${index}.unit`) || 'g'
+    const scaled = scaleNutrition(raw, amount, unit)
+
+    setValue(`ingredients.${index}.calories`, scaled.calories.toString())
+    setValue(`ingredients.${index}.protein`, scaled.protein.toString())
+    setValue(`ingredients.${index}.carbs`, scaled.carbs.toString())
+    setValue(`ingredients.${index}.fat`, scaled.fat.toString())
+    setValue(`ingredients.${index}.fiber`, scaled.fiber.toString())
+    setValue(`ingredients.${index}.sugar`, scaled.sugar.toString())
+    setExpandedNutrition(prev => new Set(prev).add(index))
   }
 
-  // Live totals for the whole recipe, recalculated as the user types
+  // Watch all ingredients so we can react to amount/unit edits
   const watchedIngredients = watch('ingredients')
+
+  // Re-scale nutrition automatically whenever amount or unit changes for any
+  // ingredient that has raw lookup data attached.
+  useEffect(() => {
+    Object.entries(rawNutritionByIndex).forEach(([idxStr, raw]) => {
+      const index = parseInt(idxStr)
+      const ing = watchedIngredients[index]
+      if (!ing) return
+
+      const amount = parseFloat(ing.amount) || 1
+      const unit = ing.unit || 'g'
+      const scaled = scaleNutrition(raw, amount, unit)
+
+      // Only update if the values actually differ, to avoid an infinite render loop
+      if (ing.calories !== scaled.calories.toString()) {
+        setValue(`ingredients.${index}.calories`, scaled.calories.toString())
+        setValue(`ingredients.${index}.protein`, scaled.protein.toString())
+        setValue(`ingredients.${index}.carbs`, scaled.carbs.toString())
+        setValue(`ingredients.${index}.fat`, scaled.fat.toString())
+        setValue(`ingredients.${index}.fiber`, scaled.fiber.toString())
+        setValue(`ingredients.${index}.sugar`, scaled.sugar.toString())
+      }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(watchedIngredients.map(i => ({ amount: i.amount, unit: i.unit })))])
+
   const totals = watchedIngredients.reduce(
     (acc, ing) => ({
       calories: acc.calories + (parseFloat(ing.calories) || 0),
@@ -223,16 +262,14 @@ export function RecipeForm() {
             <div className="flex gap-2 items-center">
               <input {...register(`ingredients.${index}.name`)} placeholder="Ingredient name"
                 className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500" />
-              <input {...register(`ingredients.${index}.amount`)} placeholder="Amount"
+              <input {...register(`ingredients.${index}.amount`)} placeholder="Amount" type="number" step="any"
                 className="w-20 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500" />
               <input {...register(`ingredients.${index}.unit`)} placeholder="Unit"
                 className="w-20 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500" />
 
               <NutritionLookup
                 ingredientName={watchedIngredients[index]?.name ?? ''}
-                amount={watchedIngredients[index]?.amount ?? ''}
-                unit={watchedIngredients[index]?.unit ?? ''}
-                onApply={(vals) => applyNutrition(index, vals)}
+                onApply={(raw) => applyNutrition(index, raw)}
               />
 
               <button type="button" onClick={() => toggleNutritionPanel(index)}
@@ -244,7 +281,12 @@ export function RecipeForm() {
                 className="text-gray-300 hover:text-red-400 text-xl transition-colors">×</button>
             </div>
 
-            {/* Manual nutrition entry, collapsible */}
+            {rawNutritionByIndex[index] && (
+              <p className="text-[11px] text-green-600 mt-2">
+                ✓ Linked to "{rawNutritionByIndex[index].productName}" — values auto-update when you change amount/unit
+              </p>
+            )}
+
             {expandedNutrition.has(index) && (
               <div className="grid grid-cols-6 gap-2 mt-3 pt-3 border-t border-gray-100">
                 <div className="flex flex-col gap-0.5">
@@ -287,7 +329,6 @@ export function RecipeForm() {
           + Add Ingredient
         </button>
 
-        {/* Live nutrition totals */}
         {(totals.calories > 0 || totals.protein > 0) && (
           <div className="grid grid-cols-4 gap-3 mt-2 pt-4 border-t border-gray-100">
             <div className="text-center">

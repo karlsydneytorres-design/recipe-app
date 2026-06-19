@@ -1,15 +1,13 @@
 'use client'
 import { useState } from 'react'
-import { searchOpenFoodFacts, scaleNutrition, NutritionResult } from '@/lib/nutrition'
+import { searchOpenFoodFacts, NutritionResult } from '@/lib/nutrition'
 
 interface NutritionLookupProps {
   ingredientName: string
-  amount: string
-  unit: string
-  onApply: (values: { calories: string; protein: string; carbs: string; fat: string; fiber: string; sugar: string }) => void
+  onApply: (result: NutritionResult) => void
 }
 
-export function NutritionLookup({ ingredientName, amount, unit, onApply }: NutritionLookupProps) {
+export function NutritionLookup({ ingredientName, onApply }: NutritionLookupProps) {
   const [open, setOpen] = useState(false)
   const [searching, setSearching] = useState(false)
   const [results, setResults] = useState<NutritionResult[]>([])
@@ -18,6 +16,7 @@ export function NutritionLookup({ ingredientName, amount, unit, onApply }: Nutri
   const handleSearch = async () => {
     if (!ingredientName.trim()) {
       setError('Type an ingredient name first')
+      setOpen(true)
       return
     }
     setOpen(true)
@@ -34,16 +33,7 @@ export function NutritionLookup({ ingredientName, amount, unit, onApply }: Nutri
   }
 
   const handlePick = (result: NutritionResult) => {
-    const amt = parseFloat(amount) || 1
-    const scaled = scaleNutrition(result, amt, unit || 'g')
-    onApply({
-      calories: scaled.calories.toString(),
-      protein: scaled.protein.toString(),
-      carbs: scaled.carbs.toString(),
-      fat: scaled.fat.toString(),
-      fiber: scaled.fiber.toString(),
-      sugar: scaled.sugar.toString(),
-    })
+    onApply(result) // pass the raw per-100g result back up; the form does the scaling
     setOpen(false)
   }
 
